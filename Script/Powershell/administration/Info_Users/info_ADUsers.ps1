@@ -1,26 +1,28 @@
 ﻿<#
 .SYNOPSIS
-    Export Active Directory computer information to CSV.
+    Export Active Directory user information to CSV.
 
 .DESCRIPTION
-    This script queries Active Directory for all computer objects and exports detailed information to a CSV file.
+    This script queries Active Directory for all user accounts and exports detailed information to a CSV file.
     
     Exported information includes:
-    - Name: Computer account name
-    - OperatingSystem: Operating system name (e.g., Windows Server 2022, Windows 11)
-    - OperatingSystemVersion: OS version number
+    - Name: User's full name
+    - sAMAccountName: User's login name (SAM account name)
     - Enabled: Account status (True/False)
-    - PrimaryGroup: Primary group membership (Domain Computers, Domain Controllers, etc.)
+    - PrimaryGroup: Primary group membership (Domain Users, etc.)
+    - AccountNotDelegated: Delegation restriction status
     - Path: Canonical path in Active Directory (OU structure)
+    - PasswordLastSet: Last password change date (dd/MM/yyyy format)
+    - PasswordExpiry: Password expiration date (dd/MM/yyyy format or "Never")
+    - PasswordNeverExpires: Password expiration policy (True/False)
     - Created: Account creation date (dd/MM/yyyy format)
     - Modified: Last modification date (dd/MM/yyyy format)
     - LastLogon: Last logon timestamp (dd/MM/yyyy format or "Never")
-    - InactiveOver180Days: Indicates if computer hasn't logged on for more than 180 days (True/False)
-    - PasswordLastSet: Last password change date (dd/MM/yyyy format or "Never")
+    - InactiveOver180Days: Indicates if user hasn't logged on for more than 180 days (True/False)
     - EncryptionTypes: Supported Kerberos encryption types (DES, RC4, AES 128, AES 256, or combinations)
 
 .NOTES
-    Output file: C:\temp\Info_ADComputers_[date].csv
+    Output file: C:\temp\Info_ADUsers_[date].csv
     Delimiter: Semicolon (;)
     Encoding: UTF-8
     Requires: Active Directory PowerShell module
@@ -29,14 +31,14 @@
 # Configuration
 $folder = "C:\temp"
 $date = Get-Date -Format "dd-MM-yyyy"
-$logFile = "$folder\Info_ADComputers_$date.csv"
+$logFile = "$folder\Info_ADUsers_$date.csv"
 
 # Create folder if it doesn't exist
 if (-not (Test-Path -Path $folder)) {
     New-Item -ItemType Directory -Path $folder -Force | Out-Null
 }
 
-# Function to decode encryption types (bit flags)
+# Function to decode encryption types
 function Get-EncryptionTypeName {
     param([int]$Value)
     
@@ -84,50 +86,58 @@ function Get-PrimaryGroupName {
     param([int]$GroupID)
     
     switch ($GroupID) {
+        513 { return "Domain Users" }
+        514 { return "Domain Guests" }
         515 { return "Domain Computers" }
-        516 { return "Domain Controllers (writable)" }
-        521 { return "Domain Controllers (Read-Only)" }
+        516 { return "Domain Controllers" }
         default { 
-            if ($GroupID -gt 2600) { return "Custom Group" }
-            else { return "Unknown Group" }
+            if ($GroupID -gt 2600) { return "Custom Group (RID: $GroupID)" }
+            else { return "Unknown Group (RID: $GroupID)" }
         }
     }
 }
 
-Write-Host "Querying Active Directory computers..." -ForegroundColor Cyan
+Write-Host "Querying Active Directory users..." -ForegroundColor Cyan
 
 # Query AD and process data using pipeline
-$computers = Get-ADComputer -Filter * -Properties Name, OperatingSystem, OperatingSystemVersion, 
-    Enabled, primaryGroupID, canonicalName, whenCreated, WhenChanged, LastLogonTimestamp, 
-    pwdLastSet, 'msDS-SupportedEncryptionTypes' |
-    Select-Object Name, OperatingSystem, OperatingSystemVersion, Enabled,
+$users = Get-ADUser -Filter * -Properties Name, sAMAccountName, Enabled, primaryGroupID, 
+    AccountNotDelegated, canonicalName, pwdLastSet, 'msDS-UserPasswordExpiryTimeComputed', 
+    PasswordNeverExpires, whenCreated, whenChanged, LastLogonTimestamp, 'msDS-SupportedEncryptionTypes' |
+    Select-Object Name, sAMAccountName, Enabled,
         @{Name='PrimaryGroup'; Expression={ Get-PrimaryGroupName $_.primaryGroupID }},
+        AccountNotDelegated,
         @{Name='Path'; Expression={ $_.canonicalName -replace [regex]::Escape("/$($_.Name)"), '' }},
+        @{Name='PasswordLastSet'; Expression={ 
+            if ($_.pwdLastSet -and $_.pwdLastSet -gt 0) { 
+                [DateTime]::FromFileTime($_.pwdLastSet).ToString("dd/MM/yyyy") 
+            } else { "Never" }
+        }},
+        @{Name='PasswordExpiry'; Expression={ 
+            if ($_.'msDS-UserPasswordExpiryTimeComputed' -and $_.'msDS-UserPasswordExpiryTimeComputed' -gt 0) { 
+                [DateTime]::FromFileTime($_.'msDS-UserPasswordExpiryTimeComputed').ToString("dd/MM/yyyy") 
+            } else { "Never" }
+        }},
+        PasswordNeverExpires,
         @{Name='Created'; Expression={ $_.whenCreated.ToString("dd/MM/yyyy") }},
-        @{Name='Modified'; Expression={ $_.WhenChanged.ToString("dd/MM/yyyy") }},
+        @{Name='Modified'; Expression={ $_.whenChanged.ToString("dd/MM/yyyy") }},
         @{Name='LastLogon'; Expression={ 
-            if ($_.LastLogonTimestamp) { 
+            if ($_.LastLogonTimestamp -and $_.LastLogonTimestamp -gt 0) { 
                 [DateTime]::FromFileTime($_.LastLogonTimestamp).ToString("dd/MM/yyyy") 
             } else { "Never" }
         }},
         @{Name='InactiveOver180Days'; Expression={ 
-            if ($_.LastLogonTimestamp) {
+            if ($_.LastLogonTimestamp -and $_.LastLogonTimestamp -gt 0) {
                 [DateTime]::FromFileTime($_.LastLogonTimestamp) -lt (Get-Date).AddDays(-180)
             } else { $true }
-        }},
-        @{Name='PasswordLastSet'; Expression={ 
-            if ($_.pwdLastSet) { 
-                [DateTime]::FromFileTime($_.pwdLastSet).ToString("dd/MM/yyyy") 
-            } else { "Never" }
         }},
         @{Name='EncryptionTypes'; Expression={ Get-EncryptionTypeName $_.'msDS-SupportedEncryptionTypes' }}
 
 Write-Host "Exporting to CSV..." -ForegroundColor Cyan
 
 # Export to CSV with proper encoding
-$computers | Export-Csv -Path $logFile -Delimiter ';' -NoTypeInformation -Encoding UTF8
+$users | Export-Csv -Path $logFile -Delimiter ';' -NoTypeInformation -Encoding UTF8
 
 Write-Host "File created successfully: $logFile" -ForegroundColor Green
-Write-Host "Total computers exported: $($computers.Count)" -ForegroundColor Green
+Write-Host "Total users exported: $($users.Count)" -ForegroundColor Green
 
 pause
