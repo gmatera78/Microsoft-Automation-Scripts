@@ -56,7 +56,7 @@ workstation05
 - For the AD option, install RSAT or run the script from a domain-joined management host where the `ActiveDirectory` module is available.
 
 **Author**
-- Based on the script metadata: Gianluca Matera (Jan 2026).
+- Gianluca Matera
 
 **License**
 - See the `LICENSE` file at the repository root.

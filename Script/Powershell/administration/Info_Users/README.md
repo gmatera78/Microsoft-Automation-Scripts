@@ -1,5 +1,7 @@
 # Info_ADUsers
 
+Author: Gianluca Matera
+
 PowerShell script to export detailed Active Directory user information to CSV format.
 
 ## Description

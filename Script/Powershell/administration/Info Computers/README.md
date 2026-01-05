@@ -1,5 +1,7 @@
 # Info_ADComputers
 
+Author: Gianluca Matera
+
 PowerShell script to export detailed Active Directory computer information to CSV format.
 
 ## Description
