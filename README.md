@@ -1,2 +1,2 @@
 # Microsoft-Automation-Scripts
-Microsoft automation scripts PowerShell for IT operations
+Enterprise-ready PowerShell automation scripts for Windows IT operations
